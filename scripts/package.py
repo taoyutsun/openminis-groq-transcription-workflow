@@ -8,7 +8,7 @@ import sys
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-VERSION = '0.1.0-preview'
+VERSION = '0.1.0'
 FILES = (
     '.gitignore', '.gitattributes', 'README.md', 'README.en.md', 'LICENSE', 'CHANGELOG.md',
     'groq_http.py', 'groq_transcribe.py', 'groq_workflow.py',

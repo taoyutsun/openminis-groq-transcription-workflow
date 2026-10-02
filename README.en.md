@@ -12,7 +12,7 @@ For long jobs, keep Open Minis in the foreground. On iPhone, you can also enable
 
 ## Test status
 
-This public version is `0.1.0-preview`, with changes to HTTP requests, cache validation, and audio decoding.
+The public version is `0.1.0`, published as a full release. It includes changes to HTTP requests, cache validation, and audio decoding; release status does not change the test coverage below.
 
 Offline regression tests and synthetic M4A/WAV audio tests are included. See [test coverage](docs/TESTING.md) for results and outstanding validation items. The supporting documents are currently in Traditional Chinese.
 
