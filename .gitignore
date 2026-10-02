@@ -1,0 +1,37 @@
+# Credentials and private runtime material
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials*
+secrets*
+# Audio and generated results belong outside the repository
+recordings/
+input/
+output/
+錄音輸入/
+錄音逐字稿/
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.ogg
+*.aac
+*.mp4
+*.webm
+chunk_*.json
+metadata.json
+摘要進度.json
+摘要設定.json
+*_逐字稿.txt
+*_摘要*.md
+*.srt
+*.tmp
+# Local artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+Thumbs.db
+dist/
