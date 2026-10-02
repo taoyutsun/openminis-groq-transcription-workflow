@@ -1,5 +1,6 @@
 """Groq requests using the Python standard library; credentials stay out of argv."""
 import json
+import math
 import os
 import re
 import socket
@@ -66,7 +67,8 @@ def _request(endpoint, body, content_type, timeout):
         status = exc.code
         retry_after = None
         try:
-            retry_after = min(90, max(1, float(exc.headers.get('Retry-After', ''))))
+            seconds = float(exc.headers.get('Retry-After', ''))
+            retry_after = max(1, seconds) if math.isfinite(seconds) else None
         except (ValueError, TypeError, AttributeError):
             pass
         exc.close()
@@ -99,15 +101,17 @@ def transcribe(audio, model, language):
                     'multipart/form-data; boundary=' + boundary, 180)
 
 
-def chat(messages, model):
+def chat(messages, model, max_tokens=2000):
     payload = json.dumps({'model': model, 'messages': messages, 'stream': False,
-                          'temperature': 0.2, 'max_completion_tokens': 4500},
+                          'temperature': 0.2, 'max_completion_tokens': max_tokens},
                          ensure_ascii=False).encode('utf-8')
     data = _request('chat/completions', payload, 'application/json', 150)
     try:
         text = data['choices'][0]['message'].get('content') or ''
     except (KeyError, IndexError, AttributeError, TypeError):
         raise GroqError('Groq 摘要回應格式不符合預期', status=0) from None
+    if data['choices'][0].get('finish_reason') not in ('stop',):
+        raise GroqError('Groq 摘要未正常完成；請分檔或調整摘要模式', status=413)
     if not isinstance(text, str) or not text.strip():
         raise GroqError('文字模型回傳空內容；請檢查摘要模型與 token 限制', status=0)
     return text.strip()

@@ -8,11 +8,11 @@ import sys
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 FILES = (
     '.gitignore', '.gitattributes', 'README.md', 'README.en.md', 'LICENSE', 'CHANGELOG.md',
-    'groq_http.py', 'groq_transcribe.py', 'groq_workflow.py',
-    'docs/PRIVACY.md', 'docs/TESTING.md', 'tests/test_workflow.py', 'scripts/package.py',
+    'groq_http.py', 'groq_transcribe.py', 'groq_workflow.py', 'groq_summary.py', 'minis_summary.py',
+    'docs/PRIVACY.md', 'docs/TESTING.md', 'tests/test_workflow.py', 'tests/test_minis_summary.py', 'scripts/package.py',
 )
 TOKEN = re.compile(r'(?:gsk_|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}')
 PRIVATE = re.compile(r'(?i)(?:C:[/\\]Users[/\\][A-Za-z0-9_.-]+|'

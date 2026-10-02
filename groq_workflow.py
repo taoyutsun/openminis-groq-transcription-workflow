@@ -10,6 +10,9 @@ import time
 
 from groq_http import GroqError, api_key, chat, safe_error
 from groq_transcribe import atomic_write, choose_backend, read_json, run, settings, sha256_file
+from groq_transcribe import record_valid
+import groq_summary
+import minis_summary
 
 DEFAULT_SOURCE = '/var/minis/shared/錄音輸入'
 DEFAULT_OUTPUT = '/var/minis/shared/錄音逐字稿'
@@ -36,14 +39,14 @@ def summary_ready(folder, stem, identity):
             read_json(folder / '摘要設定.json') == identity)
 
 
-def chat_retry(messages, model):
+def chat_retry(messages, model, max_tokens=2000):
     for attempt in range(4):
         try:
-            return chat(messages, model)
+            return chat(messages, model, max_tokens)
         except GroqError as exc:
             if attempt == 3 or not exc.retryable:
                 raise
-            pause = min(90, exc.retry_after or (30 if exc.status == 429 else 5 * (attempt + 1)))
+            pause = max(60, exc.retry_after or 0) if exc.status == 429 else 5 * (attempt + 1)
             print(f'摘要重試：{safe_error(exc)}；等待 {pause:.0f} 秒', flush=True)
             time.sleep(pause)
 
@@ -57,37 +60,12 @@ def summarize(folder, stem, model, style):
     text = transcript.read_text(encoding='utf-8')
     if not text.strip():
         raise RuntimeError('逐字稿為空，未呼叫摘要 API；請檢查音訊及辨識結果')
-    batches, current, length = [], [], 0
-    for line in text.splitlines():
-        # Bound individual lines too, rather than assuming all ASR segments are short.
-        parts = [line[i:i + 9000] for i in range(0, len(line), 9000)] or ['']
-        for part in parts:
-            if length + len(part) + 1 > 9000 and current:
-                batches.append('\n'.join(current))
-                current, length = [], 0
-            current.append(part)
-            length += len(part) + 1
-    if current:
-        batches.append('\n'.join(current))
-    progress = folder / '摘要進度.json'
-    prior = read_json(progress)
-    notes = []
-    if isinstance(prior, dict) and prior.get('summary_config') == identity:
-        candidate = prior.get('notes')
-        if (isinstance(candidate, list) and len(candidate) <= len(batches) and
-                all(isinstance(note, str) and note.strip() for note in candidate)):
-            notes = candidate
-    prompt = prompt_text(style)
-    for index, part in enumerate(batches[len(notes):], len(notes) + 1):
-        print(f'摘要前處理 {index}/{len(batches)}', flush=True)
-        notes.append(chat_retry([{'role': 'user', 'content': prompt +
-                    '\n\n以下是逐字稿的一部分；請先摘要這一部分，以便稍後整合完整摘要：\n' + part}], model))
-        atomic_write(progress, json.dumps({'summary_config': identity, 'notes': notes},
-                                          ensure_ascii=False, indent=2))
-    print('整合繁中摘要', flush=True)
-    result = chat_retry([{'role': 'user', 'content': prompt +
-                        '\n\n以下是同一份逐字稿的分段摘要；請統整成一份完整摘要，保留主要資訊與重要細節：\n\n' +
-                        '\n\n'.join(notes)}], model)
+    result = groq_summary.summarize(text, prompt_text(style), folder, identity,
+                                   lambda messages, tokens: chat_retry(messages, model, tokens))
+    save_summary(folder, stem, result, identity)
+
+
+def save_summary(folder, stem, result, identity):
     dest = folder / (stem + '_摘要.md')
     # Preserve the old summary until the replacement is successfully generated.
     if dest.exists():
@@ -96,6 +74,29 @@ def summarize(folder, stem, model, style):
     atomic_write(dest, result + '\n')
     atomic_write(folder / '摘要設定.json', json.dumps(identity, ensure_ascii=False, indent=2) + '\n')
     print('摘要完成：' + dest.name, flush=True)
+
+
+def complete_transcription(folder, source, meta, identity):
+    """Require matching content hash and every expected validated checkpoint."""
+    import math
+    if not isinstance(meta, dict) or meta.get('complete') is not True:
+        return False
+    if meta.get('source') != source.name or meta.get('settings') != identity:
+        return False
+    try:
+        duration = float(meta['duration_seconds'])
+        seconds, overlap = identity['chunk_seconds'], identity['overlap']
+        total = math.ceil(duration / seconds)
+        if not math.isfinite(duration) or duration <= 0 or meta.get('chunks') != total:
+            return False
+        for index in range(total):
+            offset = max(0, index * seconds - (overlap if index else 0))
+            if not record_valid(read_json(folder / f'chunk_{index:03d}.json'), identity, index, offset):
+                return False
+        return all(path.is_file() and path.stat().st_size > 0 for path in
+                   (folder / (source.stem + '.srt'), folder / (source.stem + '_逐字稿.txt')))
+    except (KeyError, ValueError, TypeError, OverflowError, OSError):
+        return False
 
 
 def parser():
@@ -110,6 +111,13 @@ def parser():
     p.add_argument('--language', choices=['auto', 'en', 'zh'], default='auto')
     p.add_argument('--model', default='whisper-large-v3-turbo')
     p.add_argument('--summary-model', default='openai/gpt-oss-120b')
+    p.add_argument('--summary-backend', choices=['minis', 'groq'],
+                   default=os.environ.get('SUMMARY_BACKEND', 'minis'),
+                   help='預設 minis：App 已授權模型；groq：明確選擇 Groq 分層摘要，不自動回退')
+    p.add_argument('--minis-model', default=os.environ.get('MINIS_SUMMARY_MODEL', 'gpt-6-sol'))
+    p.add_argument('--minis-provider', default=os.environ.get('MINIS_SUMMARY_PROVIDER'))
+    p.add_argument('--minis-max-tokens', type=int, default=6000)
+    p.add_argument('--minis-timeout', type=int, default=600)
     p.add_argument('--summary-style', choices=['original', 'cautious'], default='original')
     p.add_argument('--backend', choices=['auto', 'ffmpeg', 'sox'], default='auto')
     p.add_argument('--limit', type=int, default=1, help='最多處理幾份未完成檔，需大於零')
@@ -154,9 +162,17 @@ def main(argv=None):
     p = parser()
     a = p.parse_args(argv)
     try:
+        if a.summary_backend not in ('groq', 'minis'):
+            raise ValueError('SUMMARY_BACKEND 必須為 groq 或 minis')
+        if not 1 <= a.minis_max_tokens <= 65536 or not 1 <= a.minis_timeout <= 3600:
+            raise ValueError('Minis 輸出預算需為 1～65536，逾時需為 1～3600 秒')
+        resolved = None
         if a.check:
             print('音訊工具：' + choose_backend(a.backend))
             print('GROQ_API_KEY：' + ('已設定' if os.environ.get('GROQ_API_KEY', '').strip() else '未設定'))
+            if a.summary_backend == 'minis':
+                resolved = minis_summary.resolve_model(a.minis_model, a.minis_provider)
+                print('Minis 摘要模型已開放：' + resolved['model_id'])
             print('檢查僅限本機；未驗證金鑰有效性、來源權限或 API 可用性')
             return 0
         files = select_files(a)
@@ -168,6 +184,9 @@ def main(argv=None):
                 print(str(path))
             return 0
         backend = choose_backend(a.backend)
+        if a.summary_backend == 'minis' and not a.dry_run:
+            # Fail before audio upload. Listing models never performs cloud inference.
+            resolved = minis_summary.resolve_model(a.minis_model, a.minis_provider)
         count, failed = 0, 0
         output = a.output.expanduser()
         for source in files:
@@ -176,11 +195,14 @@ def main(argv=None):
             folder = output / (source.stem + '__' + digest)
             meta = read_json(folder / 'metadata.json')
             transcript = folder / (source.stem + '_逐字稿.txt')
-            complete = (isinstance(meta, dict) and meta.get('complete') is True and
-                        meta.get('source') == source.name and meta.get('settings') == identity and
-                        (folder / (source.stem + '.srt')).is_file() and transcript.is_file())
-            desired = summary_identity(transcript, a.summary_model, a.summary_style) if complete else None
-            if complete and summary_ready(folder, source.stem, desired) and not a.force:
+            complete = complete_transcription(folder, source, meta, identity)
+            desired = None
+            if complete and a.summary_backend == 'groq':
+                desired = summary_identity(transcript, a.summary_model, a.summary_style)
+            elif complete and resolved:
+                desired = minis_summary.identity(transcript, resolved, a.summary_style,
+                                                 prompt_text(a.summary_style), a.minis_max_tokens)
+            if complete and desired is not None and summary_ready(folder, source.stem, desired) and not a.force:
                 print('已完成，略過：' + source.name)
                 continue
             if a.summary_only and not complete:
@@ -192,16 +214,27 @@ def main(argv=None):
             if a.force:
                 folder = output / (source.stem + '__' + digest + '__redo_' + str(time.time_ns()))
                 complete = False
+                transcript = folder / (source.stem + '_逐字稿.txt')
             print(('預覽：' if a.dry_run else '處理：') + source.name + ' → ' + str(folder), flush=True)
             if a.dry_run:
                 continue
             try:
-                api_key()
+                if not complete or a.summary_backend == 'groq':
+                    api_key()
                 if not complete:
                     meta = run(source, folder, a.language, a.model, backend, identity=identity)
                     if not meta['complete']:
                         raise RuntimeError('轉錄尚未完成，未生成摘要')
-                summarize(folder, source.stem, a.summary_model, a.summary_style)
+                if not complete_transcription(folder, source, meta, identity):
+                    raise RuntimeError('轉錄片段未完整驗證，禁止摘要')
+                if a.summary_backend == 'minis':
+                    desired = minis_summary.identity(transcript, resolved, a.summary_style,
+                                                     prompt_text(a.summary_style), a.minis_max_tokens)
+                    result = minis_summary.generate(transcript, resolved, prompt_text(a.summary_style),
+                                                    a.minis_max_tokens, a.minis_timeout)
+                    save_summary(folder, source.stem, result, desired)
+                else:
+                    summarize(folder, source.stem, a.summary_model, a.summary_style)
             except KeyboardInterrupt:
                 print('已中斷；相同設定重跑可使用已保存進度', file=sys.stderr)
                 return 130

@@ -103,7 +103,11 @@ class WorkflowTests(unittest.TestCase):
         self.output = self.root / 'output'
         for name in ('課程一.m4a', '訪談二.mp3', '英文三.wav'):
             (self.source / name).write_bytes(('fixture:' + name).encode())
-        self.base = ['--source', str(self.source), '--output', str(self.output)]
+        self.base = ['--source', str(self.source), '--output', str(self.output), '--summary-backend', 'groq']
+        # No real pacing waits during mocked offline inference.
+        pacing = mock.patch('groq_summary.MIN_INTERVAL', 0)
+        pacing.start()
+        self.addCleanup(pacing.stop)
 
     def invoke(self, extra):
         log = io.StringIO()
@@ -187,13 +191,13 @@ class WorkflowTests(unittest.TestCase):
     def test_summary_resume_reuses_completed_notes(self):
         folder = self.root / 'summary'
         folder.mkdir()
-        (folder / 'sample_逐字稿.txt').write_text('A' * 8000 + '\n' + 'B' * 8000, encoding='utf-8')
-        with mock.patch.object(workflow, 'chat_retry', side_effect=['note one', http.GroqError('HTTP 401', 401)]):
+        (folder / 'sample_逐字稿.txt').write_text('A' * 3000 + '\n' + 'B' * 3000, encoding='utf-8')
+        with mock.patch('groq_summary.INPUT_BUDGET', 2000), mock.patch.object(workflow, 'chat_retry', side_effect=['note one', http.GroqError('HTTP 401', 401)]):
             with self.assertRaises(http.GroqError):
                 workflow.summarize(folder, 'sample', 'model', 'original')
-        with mock.patch.object(workflow, 'chat_retry', side_effect=['note two', 'final summary']) as chat:
+        with mock.patch('groq_summary.INPUT_BUDGET', 2000), mock.patch.object(workflow, 'chat_retry', side_effect=['note two', 'merged notes', 'final summary']) as chat:
             workflow.summarize(folder, 'sample', 'model', 'original')
-            self.assertEqual(chat.call_count, 2)
+            self.assertEqual(chat.call_count, 3)
         self.assertEqual((folder / 'sample_摘要.md').read_text(encoding='utf-8'), 'final summary\n')
         with mock.patch.object(workflow, 'chat_retry', side_effect=AssertionError('must skip')):
             workflow.summarize(folder, 'sample', 'model', 'original')
@@ -242,10 +246,11 @@ class MediaIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(transcription.duration_seconds(wav, 'ffmpeg'), 5.0, delta=0.2)
             self.assertAlmostEqual(transcription.duration_seconds(audio, 'ffmpeg'), 5.0, delta=0.2)
             args = ['--source', str(source), '--output', str(root / 'output'),
-                    '--file', 'synthetic.m4a', '--language', 'en']
+                    '--file', 'synthetic.m4a', '--language', 'en', '--summary-backend', 'groq']
             with mock.patch.dict(os.environ, {'GROQ_API_KEY': TEST_KEY}), \
                     mock.patch.object(transcription, 'transcribe', return_value=asr_data()) as asr, \
                     mock.patch.object(workflow, 'chat', return_value='合成測試摘要。') as chat, \
+                    mock.patch('groq_summary.MIN_INTERVAL', 0), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(workflow.main(args), 0)
                 self.assertEqual(asr.call_count, 1)
