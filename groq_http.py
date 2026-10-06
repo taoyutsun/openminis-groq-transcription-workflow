@@ -10,6 +10,7 @@ import urllib.request
 import uuid
 
 BASE = 'https://api.groq.com/openai/v1/'
+USER_AGENT = 'OpenMinis-Transcription-Workflow/0.2.1'
 
 
 class GroqError(RuntimeError):
@@ -57,6 +58,7 @@ def _request(endpoint, body, content_type, timeout):
         'Authorization': 'Bearer ' + api_key(),
         'Content-Type': content_type,
         'Accept': 'application/json',
+        'User-Agent': USER_AGENT,
     })
     opener = urllib.request.build_opener(
         NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))

@@ -7,6 +7,7 @@ import os
 import pathlib
 import sys
 import time
+import uuid
 
 from groq_http import GroqError, api_key, chat, safe_error
 from groq_transcribe import atomic_write, choose_backend, read_json, run, settings, sha256_file
@@ -73,7 +74,48 @@ def save_summary(folder, stem, result, identity):
         atomic_write(backup, dest.read_text(encoding='utf-8'))
     atomic_write(dest, result + '\n')
     atomic_write(folder / '摘要設定.json', json.dumps(identity, ensure_ascii=False, indent=2) + '\n')
+    # A verified rerun supersedes the active draft checkpoint, never its text file.
+    if identity.get('backend') == 'minis':
+        stamp = draft_stamp(folder, stem, identity)
+        state = read_json(stamp)
+        if isinstance(state, dict) and state.get('identity') == identity:
+            state['verification'] = 'superseded_by_verified'
+            atomic_write(stamp, json.dumps(state, ensure_ascii=False, indent=2) + '\n')
     print('摘要完成：' + dest.name, flush=True)
+
+
+def draft_stamp(folder, stem, identity):
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode('utf-8')).hexdigest()
+    return folder / (stem + '_摘要草稿設定_' + digest + '.json')
+
+
+def draft_ready(folder, stem, identity):
+    """An edited draft is preserved, but cannot suppress a new model request."""
+    state = read_json(draft_stamp(folder, stem, identity))
+    if not isinstance(state, dict) or state.get('identity') != identity or state.get('verification') != 'completion_unverified':
+        return None
+    name = state.get('file')
+    if not isinstance(name, str) or pathlib.Path(name).name != name or not name.startswith(stem + '_摘要_待核對草稿_') or not name.endswith('.md'):
+        return None
+    path = folder / name
+    try:
+        if path.is_file() and path.stat().st_size > 0 and state.get('sha256') == sha256_file(path):
+            return path
+    except OSError:
+        pass
+    return None
+
+
+def save_draft(folder, stem, result, identity):
+    # Unique immutable draft; never replace an edited draft or reviewed final summary.
+    dest = folder / (stem + '_摘要_待核對草稿_' + uuid.uuid4().hex + '.md')
+    with dest.open('x', encoding='utf-8') as handle:
+        handle.write(result + '\n')
+    state = {'verification': 'completion_unverified', 'identity': identity,
+             'file': dest.name, 'sha256': sha256_file(dest)}
+    atomic_write(draft_stamp(folder, stem, identity), json.dumps(state, ensure_ascii=False, indent=2) + '\n')
+    print('待核對草稿（缺少完成狀態，非完成摘要）：' + dest.name, flush=True)
+    return dest
 
 
 def complete_transcription(folder, source, meta, identity):
@@ -123,6 +165,7 @@ def parser():
     p.add_argument('--limit', type=int, default=1, help='最多處理幾份未完成檔，需大於零')
     p.add_argument('--force', action='store_true', help='另開新結果目錄重新轉錄')
     p.add_argument('--summary-only', action='store_true', help='只摘要本版本已完整轉錄的檔案')
+    p.add_argument('--retry-summary', action='store_true', help='Minis 摘要重新呼叫，保留舊稿；搭配 --summary-only 不重傳音訊')
     p.add_argument('--dry-run', action='store_true', help='預覽處理範圍，不上傳、不寫入')
     p.add_argument('--list', action='store_true', help='列出候選音檔，不上傳、不寫入')
     p.add_argument('--check', action='store_true', help='只檢查工具與金鑰是否設定，不呼叫 API')
@@ -166,6 +209,8 @@ def main(argv=None):
             raise ValueError('SUMMARY_BACKEND 必須為 groq 或 minis')
         if not 1 <= a.minis_max_tokens <= 65536 or not 1 <= a.minis_timeout <= 3600:
             raise ValueError('Minis 輸出預算需為 1～65536，逾時需為 1～3600 秒')
+        if a.retry_summary and a.summary_backend != 'minis':
+            raise ValueError('--retry-summary 只適用 Minis 摘要')
         resolved = None
         if a.check:
             print('音訊工具：' + choose_backend(a.backend))
@@ -188,6 +233,8 @@ def main(argv=None):
             # Fail before audio upload. Listing models never performs cloud inference.
             resolved = minis_summary.resolve_model(a.minis_model, a.minis_provider)
         count, failed = 0, 0
+        stats = dict(verified=0, pending_review=0, failed=0, skipped_verified=0,
+                     skipped_pending_review=0, skipped_no_transcript=0, previewed=0)
         output = a.output.expanduser()
         for source in files:
             identity = settings(source, a.language, a.model, backend)
@@ -202,11 +249,23 @@ def main(argv=None):
             elif complete and resolved:
                 desired = minis_summary.identity(transcript, resolved, a.summary_style,
                                                  prompt_text(a.summary_style), a.minis_max_tokens)
-            if complete and desired is not None and summary_ready(folder, source.stem, desired) and not a.force:
+            pending_draft = False
+            if complete and desired is not None and a.summary_backend == 'minis' and not a.force and not a.retry_summary:
+                state = read_json(draft_stamp(folder, source.stem, desired))
+                pending_draft = (isinstance(state, dict) and state.get('identity') == desired and
+                                 state.get('verification') == 'completion_unverified')
+                draft = draft_ready(folder, source.stem, desired)
+                if draft:
+                    print('已有待核對草稿（非完成摘要），略過呼叫：' + draft.name)
+                    stats['skipped_pending_review'] += 1
+                    continue
+            if complete and desired is not None and summary_ready(folder, source.stem, desired) and not pending_draft and not a.force and not a.retry_summary:
                 print('已完成，略過：' + source.name)
+                stats['skipped_verified'] += 1
                 continue
             if a.summary_only and not complete:
                 print('沒有本版本完整轉錄，略過：' + source.name)
+                stats['skipped_no_transcript'] += 1
                 continue
             if not a.all and not a.file and count >= a.limit:
                 break
@@ -217,6 +276,7 @@ def main(argv=None):
                 transcript = folder / (source.stem + '_逐字稿.txt')
             print(('預覽：' if a.dry_run else '處理：') + source.name + ' → ' + str(folder), flush=True)
             if a.dry_run:
+                stats['previewed'] += 1
                 continue
             try:
                 if not complete or a.summary_backend == 'groq':
@@ -230,19 +290,31 @@ def main(argv=None):
                 if a.summary_backend == 'minis':
                     desired = minis_summary.identity(transcript, resolved, a.summary_style,
                                                      prompt_text(a.summary_style), a.minis_max_tokens)
-                    result = minis_summary.generate(transcript, resolved, prompt_text(a.summary_style),
+                    result = minis_summary.generate_result(transcript, resolved, prompt_text(a.summary_style),
                                                     a.minis_max_tokens, a.minis_timeout)
-                    save_summary(folder, source.stem, result, desired)
+                    if result.verification == 'verified':
+                        save_summary(folder, source.stem, result.text, desired)
+                        stats['verified'] += 1
+                    elif result.verification == 'completion_unverified':
+                        save_draft(folder, source.stem, result.text, desired)
+                        stats['pending_review'] += 1
+                    else:
+                        raise RuntimeError('未知摘要驗證狀態；未保存摘要')
                 else:
                     summarize(folder, source.stem, a.summary_model, a.summary_style)
+                    stats['verified'] += 1
             except KeyboardInterrupt:
                 print('已中斷；相同設定重跑可使用已保存進度', file=sys.stderr)
                 return 130
             except Exception as exc:
                 print('失敗：' + source.name + '：' + safe_error(exc), file=sys.stderr, flush=True)
                 failed += 1
-        print(f'本次處理 {count} 份；失敗 {failed} 份；輸出 {output}', flush=True)
-        return 1 if failed else 0
+        stats['failed'] = failed
+        pending = stats['pending_review'] + stats['skipped_pending_review']
+        status = 'failed' if failed else 'pending_review' if pending else 'preview' if a.dry_run else 'complete'
+        print(f"本次處理 {count} 份；完成摘要 {stats['verified']} 份；新草稿 {stats['pending_review']} 份；既有待核對 {stats['skipped_pending_review']} 份；失敗 {failed} 份；輸出 {output}", flush=True)
+        print('WORKFLOW_RESULT ' + json.dumps(dict(status=status, **stats), ensure_ascii=False), flush=True)
+        return 1 if failed else 2 if pending else 0
     except Exception as exc:
         print(safe_error(exc), file=sys.stderr)
         return 1

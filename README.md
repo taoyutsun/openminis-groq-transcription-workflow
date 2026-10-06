@@ -2,7 +2,7 @@
 
 繁體中文 | [English](README.en.md)
 
-在 Open Minis 的 Linux 環境執行 Python 腳本，讀取你指定的音檔資料夾，透過 Groq Whisper 產生原語言 SRT 與帶時間戳的逐字稿，再呼叫 App 已授權的模型產生繁體中文 Markdown 摘要。v0.2.0 預設推薦 GPT-6-Sol，Groq 文字模型保留為明確選擇的備案。
+在 Open Minis 的 Linux 環境執行 Python 腳本，讀取你指定的音檔資料夾，透過 Groq Whisper 產生原語言 SRT 與帶時間戳的逐字稿，再呼叫 App 已授權的模型產生繁體中文 Markdown 摘要。v0.2.1 整合 iOS／Android 模型橋接格式；預設推薦 GPT-6-Sol，也可明確指定自己開放的文字模型。Groq 文字模型保留為明確選擇的備案。
 
 來源可以是 iPhone「語音備忘錄」匯出的檔案、第三方錄音 App 開放的資料夾，或 Android 可存取的錄音資料夾。腳本使用同一套參數，無須寫死錄音 App 名稱或 Android 品牌路徑。
 
@@ -12,7 +12,7 @@
 
 ## 測試狀態
 
-本公開版為 `0.2.0`。新增 App 模型橋接、摘要完成狀態檢查及 Groq 長摘要分層節流。作者的私人手機版已有約 81 分鐘錄音、41,765 個輸入 token 的 GPT-6-Sol 單次摘要成功紀錄；這不等於本公開版已完成 iOS／Android 真機端到端驗證。詳見下方測試範圍。
+本公開版為 `0.2.1`。Windows／Ubuntu WSL 各通過 67 項離線測試，涵蓋雙平台格式、草稿重跑及批次結果狀態。朋友回報修改過的私人 Android 版本可以使用，是本次相容性改善的依據；不代表這份公開版已完成雙平台真機驗證。作者私人 iPhone 版的長錄音成功紀錄另見 [測試範圍](docs/TESTING.md)。
 
 本版附有離線回歸測試與合成 M4A／WAV 音訊測試；測試結果及待驗證項目見 [測試範圍](docs/TESTING.md)。
 
@@ -20,7 +20,7 @@
 
 1. 從 [Open Minis 官方網站](https://openminis.app/) 或 [官方原始碼專案](https://github.com/OpenMinis/OpenMinis) 選取對應平台的安裝入口。
 
-2. 從 [最新正式 Release](https://github.com/taoyutsun/openminis-groq-transcription-workflow/releases/latest) 下載 ZIP 並解壓，將五支程式 `groq_workflow.py`、`groq_transcribe.py`、`groq_http.py`、`groq_summary.py`、`minis_summary.py` 放在同一資料夾。範例安裝位置是 `/var/minis/shared/錄音轉錄工具/`。README 可一併保留。升級時五支程式一起更新，先保留 v0.1.0 程式及原輸出。
+2. 從 [最新正式 Release](https://github.com/taoyutsun/openminis-groq-transcription-workflow/releases/latest) 下載 ZIP 並解壓，將五支程式 `groq_workflow.py`、`groq_transcribe.py`、`groq_http.py`、`groq_summary.py`、`minis_summary.py` 放在同一資料夾。範例安裝位置是 `/var/minis/shared/錄音轉錄工具/`。README 可一併保留。升級時五支程式一起更新，先保留舊程式及原輸出。
 
 3. 在 Open Minis 終端機確認 Python 3.8 以上及 FFmpeg／ffprobe 可執行。在 Alpine 環境中，缺少套件時可安裝：
 
@@ -44,7 +44,7 @@ python3 '/var/minis/shared/錄音轉錄工具/groq_workflow.py' --check
 
 它顯示音訊工具、Key 是否設定及 Minis 摘要模型是否在本機允許清單，不顯示 Key，也不驗證帳戶額度或真實模型請求。模型名稱有重複供應商時，用 `--minis-provider '你的供應商標籤'` 明確指定。
 
-若不使用 App 模型橋接，或安裝版本不支援其完成狀態格式，請明確選用 `--summary-backend groq`；檢查時也加上這個選項。舊的 v0.1.0 使用方式可透過環境變數 `SUMMARY_BACKEND=groq` 保留；新版不會在 Minis 失敗時自動回退。
+若不使用 App 模型橋接，或橋接格式不在本版支援範圍，請明確選用 `--summary-backend groq`；檢查時也加上這個選項。舊的 v0.1.0 使用方式可透過環境變數 `SUMMARY_BACKEND=groq` 保留；新版不會在 Minis 失敗時自動回退。Android 缺少完成狀態的相容回應可另存草稿，詳見「輸出與續跑」。
 
 ## 2. iPhone 音檔入口
 
@@ -83,7 +83,9 @@ python3 '/var/minis/shared/錄音轉錄工具/groq_workflow.py' \
 
 讀者應先用不含私人資訊的短錄音驗證掛載、解碼及輸出存取。
 
-Android 仍可使用 Groq 轉錄及 Groq 摘要（`--summary-backend groq`）。App 模型橋接則必須提供本文要求的 JSON 封裝、模型身分及正常完成狀態；查閱時官方 Android 實作的文字回應格式與 iOS 不同，未提供相同完成狀態，本版不會放寬驗證來冒充成功。請先用 `--check`；不相容時明確改選 Groq，等待 App 橋接格式支援後再試。未完成 Android 真機驗證。
+v0.2.1 可讀取 Android 直接回傳的模型清單與 `model`／`text` 回應，以及純文字輸出檔；iOS 的 `ok`／`data` 與 JSON 輸出格式也保留支援。兩者都核對模型身分、非空內容及已回報的輸出用量／中斷訊號。Android 若沒有回報正常完成狀態，摘要保存為「待核對草稿」，不建立完成摘要標記，也不覆蓋舊摘要。未完成本公開版 Android 真機驗證。格式依據：[官方 Android 橋接實作](https://github.com/OpenMinis/OpenMinis/blob/b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c/src/android/app/src/main/java/com/openminis/app/sandbox/offload/ModelUseOffloadHandler.kt)。
+
+Groq 請求另加入跨平台的 workflow `User-Agent`，不冒充瀏覽器、不停用 TLS。朋友的修改版也補上這個標頭，但缺少原始失敗回應，因此不能保證這項修正可解決所有連線問題；401／403／429 等錯誤仍須分別檢查帳戶、權限及額度。
 
 ## 4. 選取與執行
 
@@ -137,6 +139,10 @@ python3 '/var/minis/shared/錄音轉錄工具/groq_workflow.py' \
 
 > 這次我明確選擇 Groq 備案，請加上 `--summary-backend groq`，先預覽指定檔案再執行。
 
+> 如果回傳結果缺少完成狀態，請保留為待核對草稿，不要宣稱已完成摘要。先告訴我完成、待核對及失敗各有幾份。
+
+> 這份錄音的草稿需要重新生成，請指定原音檔，加入 `--summary-only --retry-summary`。不要重傳音訊，也不要覆蓋我已修改的草稿。
+
 自然語言指令由你目前的 Open Minis 對話模型解讀並執行；這些 Python 程式不是 Open Minis 外掛，也不會自動綁定特定聊天標題。
 
 ## 5. 語言與摘要模式
@@ -164,7 +170,11 @@ Groq 模式會先分段摘要、逐級整合，保留每個已完成節點；一
 
 ## 6. 輸出與續跑
 
-每份音檔建立 `檔名__識別碼/`，包含 SRT、`_逐字稿.txt`、`_摘要.md`、`metadata.json`、`chunk_*.json`、`摘要設定.json`；Groq 分層摘要另有 `摘要進度.json`。
+每份音檔建立 `檔名__識別碼/`，包含 SRT、`_逐字稿.txt`、`metadata.json`、`chunk_*.json`。確認模型正常結束的摘要使用 `_摘要.md` 與 `摘要設定.json`；Groq 分層摘要另有 `摘要進度.json`。這裡的「確認」只指 App／服務回報的結束狀態，不代表內容正確或沒有遺漏。
+
+Android 相容回應若缺少完成狀態，使用 `檔名_摘要_待核對草稿_隨機識別碼.md`，以及按設定區分的 `_摘要草稿設定_*.json`。檔名不綁定任何模型；設定記錄實際模型、逐字稿／prompt／設定及草稿內容雜湊。即使文字看似完整，也不自動升格為完成摘要。請自行核對原逐字稿及重要段落，保留原草稿與驗證紀錄；本版沒有自動「核准草稿」功能。
+
+批次結尾提供完成、新草稿、既有待核對及失敗數量，另有一行 `WORKFLOW_RESULT {JSON}` 供 Agent 讀取。結束碼：`0` 正常完成／略過已完成／預覽，`1` 有失敗，`2` 沒有失敗但仍有待核對草稿，`130` 使用者中斷。混合批次有失敗時優先回傳 `1`。Agent 不應把 `2` 當成崩潰而反覆重跑；詳看 JSON 計數。`--list`／`--check` 不產生這份批次報告。
 
 識別碼根據音檔內容 SHA-256、語言、轉錄模型、解碼工具及分段設定計算。摘要快取另外檢查逐字稿內容 SHA-256、完整 prompt、摘要模型及模式。
 
@@ -174,8 +184,11 @@ Groq 模式會先分段摘要、逐級整合，保留每個已完成節點；一
 - 語言、轉錄模型、解碼工具或音檔內容改變：產生另一個輸出目錄。
 - `--force`：另開新目錄重做轉錄；不能和 `--summary-only` 併用。
 - `--summary-only`：只處理本公開版已完整轉錄的結果，不把未完成的逐字稿當成完整成果。
+- 同設定且草稿未被修改：沿用既有待核對草稿，不再呼叫模型，但仍回報待核對，不冒充已完成。
+- 草稿手動修改、摘要模型或設定改變：保留舊草稿，另存新稿，不會因舊檔存在而卡住。
+- `--retry-summary`：明確重新呼叫 Minis 摘要，保留舊稿。搭配 `--summary-only` 與指定音檔即可不重傳音訊；此選項不適用 Groq 摘要模式。
 
-v0.1.0 公開版的完整轉錄可沿用，摘要後端切換不重新轉錄。原始私人手機版的識別碼與輸出格式不同；本版不自動接續私人版快取。先保留舊成果，公開版使用自己的輸出資料夾測試。Minis 單次呼叫中斷時須重送該次摘要，已完成的轉錄仍保留；Groq 可續跑已保存的分層節點。
+v0.1.0／v0.2.0 公開版的完整轉錄可沿用；相同設定的 v0.2.0 已完成摘要也可略過，不強制重新生成。原始私人手機版（包括朋友修改版）的識別碼／草稿格式不會自動遷移。先保留舊成果，公開版使用自己的輸出資料夾測試。Minis 單次呼叫中斷時須重送該次摘要，已完成的轉錄仍保留；Groq 可續跑已保存的分層節點。
 
 請一次只執行一個 workflow 實例。iOS 掛起 App、Android 省電限制或程序被終止時，應手動以相同參數重跑；尚未保存的當前片段可能需重新上傳。
 

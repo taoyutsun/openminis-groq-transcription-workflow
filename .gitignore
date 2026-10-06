@@ -24,6 +24,7 @@ chunk_*.json
 metadata.json
 摘要進度.json
 摘要設定.json
+*_摘要草稿設定_*.json
 *_逐字稿.txt
 *_摘要*.md
 *.srt

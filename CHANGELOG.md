@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 — 2026-10-06
+
+- Groq 轉錄／摘要加入通用 workflow User-Agent，維持 TLS 驗證、端點限制及禁止重新導向；不宣稱這能解決所有 Android 連線問題。
+- 統一接受 iOS `ok`／`data`／JSON 輸出與 Android 直接清單、`model`／`text`／純文字輸出，保留精確模型授權與身分檢查。
+- Android 缺少完成訊號時僅存待核對草稿，不覆蓋完成摘要、不建立完成標記；明確截斷、中斷、輸出預算用盡或格式錯誤仍拒絕保存。
+- 草稿採模型無關的通用檔名，內容雜湊綁定設定；修改、換模型／設定與明確重跑時另存新稿，保留使用者修改。新增 `--retry-summary`，搭配 `--summary-only` 不重傳音訊。
+- 批次分開呈現完成／待核對／失敗並輸出 `WORKFLOW_RESULT` JSON；新增結束碼 2 表示仍需核對，混合失敗優先回傳 1。
+- 修正 iOS 畸形 JSON 陣列輸出錯誤處理。保持原始摘要 prompt、公開版完整轉錄及 v0.2.0 完成摘要快取相容。
+- Windows／Ubuntu WSL 各通過 67 項離線測試（新增 28 項）；中英文 README、資料流、測試限制同步，不宣稱公開版雙平台真機已驗證。
+
 ## 0.2.0 — 2026-10-02
 
 - 摘要預設改用 Open Minis 已授權模型橋接，推薦 GPT-6-Sol；Groq Whisper 轉錄保持不變。新增 `--summary-backend`、`--minis-model`、供應商、輸出預算及逾時設定。

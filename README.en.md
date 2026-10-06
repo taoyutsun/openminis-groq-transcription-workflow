@@ -2,7 +2,7 @@
 
 [繁體中文](README.md) | English
 
-Run Python scripts in the Open Minis Linux environment to read a folder of audio files. Groq Whisper produces original-language SRT and timestamped transcripts, then an app-authorized model generates Traditional Chinese Markdown summaries. Version 0.2.0 recommends GPT-6-Sol through the Minis model bridge by default; Groq text summaries remain an explicitly selected alternative.
+Run Python scripts in the Open Minis Linux environment to read a folder of audio files. Groq Whisper produces original-language SRT and timestamped transcripts, then an app-authorized model generates Traditional Chinese Markdown summaries. Version 0.2.1 supports both iOS and Android bridge formats. GPT-6-Sol remains the default; you can explicitly select another exposed text model. Groq text summaries remain an explicitly selected alternative.
 
 Sources can include recordings exported from iPhone Voice Memos, folders exposed by third-party recording apps, or accessible Android recording folders. The scripts share the same options across these sources; no recording app name or Android vendor path is hardcoded.
 
@@ -12,7 +12,7 @@ For long jobs, keep Open Minis in the foreground. On iPhone, you can also enable
 
 ## Test status
 
-The public version is `0.2.0`, adding app-owned model invocation, completion checks, and paced hierarchical Groq summaries. The author's private iPhone workflow successfully summarized an approximately 81-minute recording with 41,765 input tokens using GPT-6-Sol in one request. This is not an end-to-end phone test of this public version. See the test coverage document for the distinction.
+The public version is `0.2.1`, with 67 offline tests passing on both Windows and Ubuntu WSL. Tests cover both bridge formats, draft reruns, and batch result states. A friend's modified private Android version reportedly worked and informed these compatibility changes; that is not physical-device validation of this public version. The author's private iPhone long-recording experience is described separately in [test coverage](docs/TESTING.md).
 
 Offline regression tests and synthetic M4A/WAV audio tests are included. See [test coverage](docs/TESTING.md) for results and outstanding validation items. The supporting documents are currently in Traditional Chinese.
 
@@ -44,7 +44,7 @@ python3 '/var/minis/shared/錄音轉錄工具/groq_workflow.py' --check
 
 This reports audio tools, whether a key is configured, and whether the Minis summary model is exposed in the local allowed list. It does not reveal keys or validate quotas or actual inference access. Use `--minis-provider 'your provider label'` to disambiguate duplicate model entries.
 
-To use Groq instead, or if your app version lacks the required bridge format, explicitly add `--summary-backend groq`, including when checking setup. Set `SUMMARY_BACKEND=groq` to retain the v0.1.0 backend choice. The workflow never silently falls back to another service.
+To use Groq instead, or if your app's bridge format is unsupported, explicitly add `--summary-backend groq`, including when checking setup. Set `SUMMARY_BACKEND=groq` to retain the v0.1.0 backend choice. The workflow never silently falls back to another service. Supported Android responses without completion metadata can be saved as review drafts; see Output and resuming.
 
 The examples retain the Chinese folder names used by the default configuration: `錄音轉錄工具` (scripts), `錄音輸入` (audio input), and `錄音逐字稿` (output). You can use other names with `--source` and `--output`.
 
@@ -85,7 +85,9 @@ Official references: [Samsung recording storage and sharing](https://www.samsung
 
 Use a short, non-sensitive recording first to verify mounting, decoding, and output access.
 
-Android can use Groq transcription and Groq summaries with `--summary-backend groq`. The Minis backend requires the supported JSON envelope, model identity, and completion status. At review time, the official Android text bridge differed from iOS and did not report the same completion status; this version does not weaken validation to claim success. Run `--check` first and explicitly select Groq if incompatible. Android physical-device testing is still outstanding.
+Version 0.2.1 accepts Android's direct model catalog, `model`/`text` responses and plain-text output files, while retaining iOS `ok`/`data` envelopes and JSON output. Both validate model identity, nonempty content, and reported output usage/interruption signals. Without a normal completion signal, an Android response becomes a review draft, not a completed summary; existing summaries are left untouched. Public-version Android physical-device testing is still outstanding. Format reference: [official Android bridge implementation](https://github.com/OpenMinis/OpenMinis/blob/b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c/src/android/app/src/main/java/com/openminis/app/sandbox/offload/ModelUseOffloadHandler.kt).
+
+Groq requests now include a cross-platform workflow `User-Agent`, without impersonating a browser or disabling TLS. The friend's patch added this header too, but the original failure response was unavailable, so this is not a guaranteed fix for all connectivity issues. Check account access, permissions and quotas for 401/403/429 errors.
 
 ## 4. Select files and run
 
@@ -139,6 +141,10 @@ Tell Open Minis the actual script and source locations, for example:
 
 > I explicitly choose the Groq alternative this time. Add `--summary-backend groq`, preview the selected files, then run.
 
+> If completion metadata is missing, keep the result as a review draft, not a completed summary. Tell me the completed, pending-review and failed counts separately.
+
+> Regenerate this recording's draft with the original audio selected and `--summary-only --retry-summary`. Do not upload audio again or overwrite my edited drafts.
+
 Your current Open Minis chat model interprets and executes these instructions. The Python scripts are not an Open Minis plugin and do not bind themselves to a particular conversation title.
 
 ## 5. Language and summary settings
@@ -166,7 +172,11 @@ Both backends summarize recognized text rather than directly understanding the f
 
 ## 6. Output and resuming
 
-Each recording gets a `filename__identifier/` folder containing SRT, `_逐字稿.txt` (transcript), `_摘要.md` (summary), `metadata.json`, `chunk_*.json`, and `摘要設定.json` (summary settings). Groq hierarchical summaries additionally use `摘要進度.json` (summary progress).
+Each recording gets a `filename__identifier/` folder containing SRT, `_逐字稿.txt` (transcript), `metadata.json` and `chunk_*.json`. Summaries with a verified normal completion signal use `_摘要.md` and `摘要設定.json`; Groq additionally uses `摘要進度.json`. Verification means the app/service reported normal termination, not that the text is accurate or exhaustive.
+
+Supported Android responses lacking completion metadata use `filename_摘要_待核對草稿_random-id.md` and a settings-specific `_摘要草稿設定_*.json` checkpoint. Filenames are model-independent; checkpoints bind the actual model, transcript/prompt/settings and draft content hash. Drafts are never automatically promoted to final summaries. Review the original transcript and important passages yourself, retaining the original draft and verification records. There is no automatic draft-approval feature.
+
+Batch output separates verified summaries, new drafts, existing pending-review drafts and failures, followed by `WORKFLOW_RESULT {JSON}` for agents. Exit codes: `0` normal completion/skipping completed results/preview; `1` any failure; `2` no failure but drafts remain pending review; `130` user interruption. Failure takes precedence in mixed batches. Agents must not treat `2` as a crash and blindly retry; inspect the JSON counts. `--list` and `--check` do not emit batch reports.
 
 The identifier incorporates the audio-content SHA-256, language, transcription model, decoder, and chunking settings. Summary caching separately checks the transcript-content SHA-256, full prompt, summary model, and style.
 
@@ -176,8 +186,11 @@ The identifier incorporates the audio-content SHA-256, language, transcription m
 - Different language, transcription model, decoder, or audio content: create a different output folder.
 - `--force`: create a new folder and transcribe again; cannot be combined with `--summary-only`.
 - `--summary-only`: use only fully transcribed results from this public version, not incomplete transcripts.
+- Unchanged draft and settings: reuse the review draft without inference, but still report pending review, not completion.
+- Edited drafts or changed summary settings/model: preserve the old draft and save a new one without being blocked by existing files.
+- `--retry-summary`: explicitly rerun Minis inference while preserving previous drafts. Combine with `--summary-only` and a selected file to avoid audio uploads. This option is not available for Groq summaries.
 
-Complete v0.1.0 public transcription results are reusable; changing the summary backend does not transcribe again. The private phone version uses different identifiers/cache formats and is not automatically migrated. Preserve those results and test the public version separately. Interrupted Minis single-pass summaries resend that request, but keep completed transcription. Groq resumes saved hierarchy nodes.
+Complete v0.1.0/v0.2.0 public transcription results are reusable; matching completed v0.2.0 summaries remain reusable too, without mandatory regeneration. Private phone versions, including the friend's patch, are not automatically migrated. Preserve those results and test the public version separately. Interrupted Minis single-pass summaries resend that request, but keep completed transcription. Groq resumes saved hierarchy nodes.
 
 Run only one workflow instance at a time. If iOS suspends the app, Android power management interrupts it, or the process is terminated, manually rerun with the same options. The current chunk may need to be uploaded again if its result was not saved.
 

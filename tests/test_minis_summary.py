@@ -20,12 +20,11 @@ MODEL = {'entry_id': 'example/gpt-6-sol', 'model_id': 'gpt-6-sol',
 
 
 class BridgeTests(unittest.TestCase):
-    def test_legacy_android_catalog_fails_before_inference(self):
+    def test_android_catalog_resolves_exact_model(self):
         proc = subprocess.CompletedProcess([], 0, stdout=json.dumps({'models': [MODEL]}), stderr='')
         with mock.patch.object(minis.shutil, 'which', return_value='minis-model-use'), \
                 mock.patch.object(minis.subprocess, 'run', return_value=proc):
-            with self.assertRaisesRegex(RuntimeError, 'summary-backend groq'):
-                minis.resolve_model()
+            self.assertEqual(minis.resolve_model(), MODEL)
 
     def test_default_is_minis_and_exact_named_model(self):
         with mock.patch.dict('os.environ', {}, clear=True):
@@ -166,7 +165,7 @@ class WorkflowSafetyTests(unittest.TestCase):
                     mock.patch.object(workflow, 'chat_retry', return_value='Groq summary'), \
                     mock.patch('groq_summary.MIN_INTERVAL', 0), \
                     mock.patch.object(minis, 'resolve_model', return_value=MODEL), \
-                    mock.patch.object(minis, 'generate', return_value='Minis summary') as summary, \
+                    mock.patch.object(minis, 'generate_result', return_value=minis.SummaryResult('Minis summary', 'verified')) as summary, \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(workflow.main(args + ['--summary-backend', 'groq']), 0)
                 with mock.patch.object(workflow, 'api_key', side_effect=AssertionError('no Groq key')):
